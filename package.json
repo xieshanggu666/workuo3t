@@ -1,0 +1,8 @@
+{
+  "name": "slingshot-game",
+  "version": "1.0.0",
+  "description": "引力跳板：星际弹弓轨道规划游戏",
+  "scripts": {
+    "dev": "powershell -NoProfile -Command \"$p = python -c \\\"import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1]);s.close()\\\"; $env:PORT=$p; Start-Sleep -Seconds 1; Start-Process ('http://127.0.0.1:'+$p); python -m uvicorn app.main:app --host 127.0.0.1 --port $p\""
+  }
+}
