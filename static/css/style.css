@@ -56,9 +56,12 @@ body {
 .level-num { color: var(--cyan); font-size: 12px; letter-spacing: 1px; }
 .level-card h2 { font-size: 19px; }
 .brief { color: var(--muted); font-size: 13px; line-height: 1.7; min-height: 68px; }
-.level-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; }
+.level-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; gap: 8px; flex-wrap: wrap; }
+.stars { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .stars .lit { color: var(--gold); }
 .stars .dim { color: rgba(255, 209, 102, 0.22); }
+.stars .best-meta { width: 100%; color: var(--muted); font-size: 11px; letter-spacing: 0; margin-top: 3px; }
+.foot-btns { display: flex; align-items: center; gap: 10px; }
 .go-btn { color: var(--cyan); font-size: 13px; }
 .lock-tag { color: var(--muted); font-size: 12px; }
 
@@ -185,3 +188,25 @@ body {
 .modal-stats b { display: block; font-size: 18px; color: var(--text); margin-bottom: 2px; }
 .modal-ms { font-size: 12px; color: var(--muted); margin-bottom: 18px; line-height: 1.7; }
 .modal-btns { display: flex; gap: 10px; justify-content: center; }
+
+/* ---------- 成绩记录 / 回放 ---------- */
+.replay-best-btn {
+  margin-left: 8px; letter-spacing: 0; padding: 2px 10px;
+  border-color: rgba(124, 232, 184, 0.5); color: var(--green);
+}
+.replay-best-btn:hover { border-color: var(--green); color: var(--green); }
+.replay-tag { color: var(--green); font-size: 11px; }
+.replay-tag .legacy-tag {
+  color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
+  padding: 0 5px; margin-left: 4px; font-size: 10px;
+}
+.new-best-banner {
+  background: linear-gradient(135deg, rgba(255, 209, 102, 0.18), rgba(255, 150, 80, 0.18));
+  border: 1px solid rgba(255, 209, 102, 0.55); color: #ffe3a3;
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; margin-bottom: 14px;
+}
+.saved-banner {
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line);
+  color: var(--muted); border-radius: 999px; padding: 7px 16px; font-size: 12px;
+  margin-bottom: 14px;
+}

@@ -1,7 +1,7 @@
-/* 视图：关卡游戏主界面（太阳系画布 + 动作编排 + HUD） */
+/* 视图：关卡游戏主界面（太阳系画布 + 动作编排 + HUD + 成绩记录回放） */
 window.GameView = {
   name: "GameView",
-  props: ["level", "bodies", "scores"],
+  props: ["level", "bodies", "scores", "replayRecordId"],
   data() {
     return {
       actions: [],
@@ -9,6 +9,7 @@ window.GameView = {
       preview: null,
       result: null,
       running: false,
+      submitting: false,
       hintShown: false,
       expanded: -1,
       anim: { playing: false, time: 0, speed: 30 },
@@ -16,6 +17,9 @@ window.GameView = {
       dragging: false,
       lastX: 0, lastY: 0,
       dpr: 1,
+      replayRecord: null,   // 当前载入的成绩记录（null = 全新规划）
+      replayBadge: null,    // 刚提交的记录是否为新最佳
+      _suppressPreview: 0,
     };
   },
   computed: {
@@ -35,8 +39,11 @@ window.GameView = {
       if (!this.preview) return "";
       return `${(this.preview.fuel_used * 1731.5).toFixed(1)} / ${(this.preview.budget_dv * 1731.5).toFixed(1)} km/s`;
     },
+    bestScore() {
+      return (this.scores && this.scores[this.level.id]) || null;
+    },
     starBest() {
-      return (this.scores && this.scores[this.level.id] && this.scores[this.level.id].stars) || 0;
+      return this.bestScore ? this.bestScore.stars : 0;
     },
     msText() {
       if (!this.preview) return "";
@@ -45,7 +52,7 @@ window.GameView = {
       return all.map(n => (done.includes(n) ? "✅" : "⬜") + " " + n).join("　");
     },
     preOk() {
-      if (!this.preview) return null;
+      if (!this.preview) return "";
       if (this.preview.ok) return "任务达成！";
       return "未达成：" + this.preview.reason;
     },
@@ -53,13 +60,19 @@ window.GameView = {
   watch: {
     actions: {
       deep: true,
-      handler() { this._schedulePreview(); },
+      handler() {
+        if (this._suppressPreview > 0) { this._suppressPreview--; return; }
+        this._schedulePreview();
+      },
     },
   },
   mounted() {
     this._setupCanvas();
     window.addEventListener("resize", this._resize);
     this._raf();
+    if (this.replayRecordId) {
+      this.loadRecord(this.replayRecordId, true);
+    }
   },
   beforeUnmount() {
     window.removeEventListener("resize", this._resize);
@@ -97,7 +110,6 @@ window.GameView = {
     actTitle(a) {
       if (a.type === "coast") return `⏳ 等待 ${Math.round(a.days)} 天`;
       if (a.type === "burn") {
-        const b = this.bodyById;
         return `🔥 点火 ${(a.dv * 1731.5).toFixed(1)} km/s @ ${Math.round(a.angle)}°`;
       }
       const pl = this.bodyById[a.planet_id];
@@ -108,7 +120,10 @@ window.GameView = {
       this.actions = [];
       this.preview = null;
       this.result = null;
+      this.replayRecord = null;
+      this.replayBadge = null;
       this.anim.time = 0;
+      this.anim.playing = false;
       this._preview();
     },
     toggleHint() { this.hintShown = !this.hintShown; },
@@ -121,25 +136,55 @@ window.GameView = {
     async _preview() {
       if (!this.level) return;
       try {
-        this.preview = await API.preview(this.level.id, this.actions);
+        this.preview = await API.preview(this.level.id, this._plainActions());
         if (!this.anim.playing) this.anim.time = Math.min(this.anim.time, this.preview.elapsed_days);
       } catch (e) {
         this.preview = null;
       }
     },
+    _plainActions() {
+      // 提交/预览时去掉前端的 uid
+      return this.actions.map(a => {
+        const { uid, ...rest } = a;
+        return rest;
+      });
+    },
+
+    // ---- 发射：先 run（服务端模拟+发令牌），再 submit（幂等落库） ----
     async launch() {
-      if (this.running) return;
+      if (this.running || this.submitting) return;
       this.running = true;
+      this.replayBadge = null;
       try {
-        const r = await API.run(this.level.id, this.actions);
+        const plain = this._plainActions();
+        const r = await API.run(this.level.id, plain);
         this.result = r;
         this.preview = r;
-        if (r.ok) {
-          await API.saveScore(this.level.id, r.stars, r.fuel_used, r.elapsed_days);
-          this.$emit("score", { level_id: this.level.id, stars: r.stars });
-        }
         this.anim.time = 0;
         this.anim.playing = false;
+        if (r.ok && r.submit_token) {
+          // 网络抖动重发也安全：相同令牌只落一条记录
+          this.submitting = true;
+          try {
+            const s = await API.submit(this.level.id, plain, r.submit_token);
+            if (s.record) {
+              this.replayRecord = s.record;
+              this.replayBadge = s.is_best ? "new-best" : "saved";
+              this.$emit("score", {
+                level_id: this.level.id,
+                stars: s.best_stars,
+                fuel_used: s.record.fuel_used,
+                elapsed_days: s.record.elapsed_days,
+                best_record_id: s.record.id,
+              });
+            }
+          } catch (se) {
+            // 提交失败不影响本次结算结果，下次相同计划会按内容哈希去重
+            console.warn("成绩提交失败：", se);
+          } finally {
+            this.submitting = false;
+          }
+        }
       } catch (e) {
         alert("执行失败：" + e.message);
       } finally {
@@ -147,8 +192,44 @@ window.GameView = {
       }
     },
     nextLevel() {
-      this.$emit("enter", this.level.id + 1);
+      this.$emit("enter", this.level.id + 1, null);
     },
+
+    // ---- 成绩记录回放 ----
+    async loadRecord(id, autoplay = false) {
+      try {
+        const rec = await API.record(id, this.level.id);
+        if (!rec.replayable) {
+          alert("这是旧版存档的最佳成绩，未保存动作与轨迹，无法回放。重新发射一次即可生成可回放记录。");
+          return;
+        }
+        this.replayRecord = rec;
+        this.replayBadge = null;
+        this.result = null;
+        // 直接用服务端存档的权威模拟结果渲染，不再重新预览（轨迹逐位一致）
+        this.preview = {
+          ok: rec.ok, reason: rec.reason,
+          elapsed_days: rec.elapsed_days, fuel_used: rec.fuel_used,
+          budget_dv: this.level.budget_dv,
+          milestones: rec.milestones, events: rec.events,
+          trajectory: rec.trajectory,
+        };
+        // 载入动作到编排器（供查看与再编辑）；watch 在 nextTick 才触发，
+        // 因此先换数组、后置抑制计数即可跳过这次由存档填充引起的重新预览
+        this.actions = rec.actions.map(a => ({ ...a, uid: this.uid++ }));
+        this._suppressPreview = 1;
+        this.anim.time = 0;
+        this.anim.playing = !!autoplay;
+      } catch (e) {
+        alert("回放载入失败：" + e.message);
+      }
+    },
+    async replayBest() {
+      if (this.bestScore && this.bestScore.best_record_id) {
+        await this.loadRecord(this.bestScore.best_record_id, true);
+      }
+    },
+
     // ---- 动画与画布 ----
     _setupCanvas() {
       this.canvas = this.$refs.cv;
@@ -223,6 +304,10 @@ window.GameView = {
           <template v-for="i in 3" :key="i">
             <span :class="i <= starBest ? 'lit' : 'dim'">★</span>
           </template>
+          <button v-if="bestScore && bestScore.best_record_id"
+                  class="btn mini replay-best-btn"
+                  title="载入并回放本关最佳成绩的动作与轨迹"
+                  @click="replayBest">▶ 回放最佳</button>
         </span>
       </div>
       <div class="hud-fuel">
@@ -231,8 +316,8 @@ window.GameView = {
       </div>
       <button class="btn ghost" @click="toggleHint">{{ hintShown ? '隐藏提示' : '策略提示' }}</button>
       <button class="btn ghost" @click="reset">重置</button>
-      <button class="btn primary" :disabled="running" @click="launch">
-        {{ running ? '计算中…' : '🚀 发射' }}
+      <button class="btn primary" :disabled="running || submitting" @click="launch">
+        {{ submitting ? '成绩保存中…' : (running ? '计算中…' : '🚀 发射') }}
       </button>
     </header>
 
@@ -243,6 +328,10 @@ window.GameView = {
         <div class="canvas-hud">
           <div class="chud-row">
             <span>⏱ {{ Math.round(anim.time) }} / {{ Math.round(simTime) }} 天</span>
+            <span v-if="replayRecord" class="replay-tag">
+              📼 回放记录 #{{ replayRecord.id }}
+              <span v-if="replayRecord.run_id && replayRecord.run_id.startsWith('legacy:')" class="legacy-tag">旧档</span>
+            </span>
             <span class="chud-btns">
               <button class="btn mini" @click="play">{{ anim.playing ? '⏸' : '▶' }}</button>
               <button class="btn mini" @click="zoom(1.3)">+</button>
@@ -315,6 +404,8 @@ window.GameView = {
     <!-- 结算弹窗 -->
     <div v-if="result" class="modal-mask" @click.self="result = null">
       <div class="modal" :class="result.ok ? 'ok' : 'fail'">
+        <div v-if="replayBadge === 'new-best'" class="new-best-banner">🏆 刷新最佳成绩！已保存为可回放记录</div>
+        <div v-else-if="replayBadge === 'saved'" class="saved-banner">成绩已记录（未超过当前最佳）</div>
         <div class="modal-stars">
           <template v-for="i in 3" :key="i">
             <span :class="i <= result.stars ? 'lit big' : 'dim big'">★</span>

@@ -1,17 +1,12 @@
-"""游戏 API：系统信息 / 动作预览 / 任务执行 / 最佳成绩存档。"""
+"""游戏 API：系统信息 / 动作预览 / 任务执行 / 幂等提交成绩 / 成绩记录与回放。"""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union
+from typing import List, Optional
 
-from app.models import LevelScore
-from app.core.database import get_db
-from app.services import physics
+from app.services import physics, records
 from app.services.levels import LEVELS, LEVEL_BY_ID
 
 router = APIRouter(prefix="/api")
-
-_PLANET_IDS = {b["id"] for b in physics.BODIES if b["id"] != "sun"}
-_ACTION_TYPES = {"coast", "burn", "slingshot"}
 
 
 class Action(BaseModel):
@@ -28,6 +23,12 @@ class SimRequest(BaseModel):
     actions: List[Action] = Field(default_factory=list)
 
 
+class SubmitRequest(BaseModel):
+    level_id: int
+    actions: List[Action] = Field(default_factory=list)
+    submit_token: Optional[str] = Field(default=None, max_length=128)
+
+
 class ScoreRequest(BaseModel):
     level_id: int
     stars: int = Field(ge=0, le=3)
@@ -35,40 +36,8 @@ class ScoreRequest(BaseModel):
     elapsed_days: float = 0.0
 
 
-def _validate(actions: List[Action]) -> List[dict]:
-    out = []
-    for a in actions:
-        if a.type not in _ACTION_TYPES:
-            raise HTTPException(400, f"未知动作类型: {a.type}")
-        if a.type == "coast":
-            out.append({"type": "coast", "days": max(0.0, a.days or 0.0)})
-        elif a.type == "burn":
-            out.append({"type": "burn", "angle": float(a.angle or 0.0),
-                        "dv": max(0.0, min(0.02, a.dv or 0.0))})
-        elif a.type == "slingshot":
-            if a.planet_id not in _PLANET_IDS:
-                raise HTTPException(400, f"未知行星: {a.planet_id}")
-            out.append({"type": "slingshot", "planet_id": a.planet_id,
-                        "b": max(-0.2, min(0.2, a.b or 0.0))})
-    return out
-
-
-def _sim_response(lv, actions, with_stars: bool):
-    r = physics.integrate(lv, actions)
-    resp = {
-        "ok": r["ok"],
-        "reason": r["reason"],
-        "elapsed_days": r["elapsed_days"],
-        "fuel_used": r["fuel_used"],
-        "budget_dv": r["budget_dv"],
-        "milestones": r["milestones"],
-        "events": r["events"],
-        "trajectory": r["trajectory"],
-    }
-    if with_stars:
-        stars = physics.stars_for(lv, r["fuel_used"], r["ok"])
-        resp["stars"] = stars
-    return resp
+def _action_dicts(items: List[Action]) -> List[dict]:
+    return [a.model_dump(exclude_none=True) for a in items]
 
 
 @router.get("/system")
@@ -86,41 +55,48 @@ def system_info():
     levels = [{"id": lv["id"], "name": lv["name"], "brief": lv["brief"],
                "milestones": lv["milestones"], "budget_dv": lv["budget_dv"],
                "t_max": lv["t_max"], "hint": lv["hint"]} for lv in LEVELS]
-    scores = {}
-    db = next(get_db())
-    for s in db.query(LevelScore).all():
-        scores[s.level_id] = {"stars": s.stars, "fuel_used": s.fuel_used,
-                              "elapsed_days": s.elapsed_days}
-    return {"bodies": bodies, "levels": levels, "scores": scores}
+    return {"bodies": bodies, "levels": levels, "scores": records.best_map()}
 
 
 @router.post("/preview")
 def preview(req: SimRequest):
-    lv = LEVEL_BY_ID.get(req.level_id)
-    if lv is None:
+    """实时预览：不评分、不颁发令牌、不落库。"""
+    if LEVEL_BY_ID.get(req.level_id) is None:
         raise HTTPException(404, "关卡不存在")
-    return _sim_response(lv, _validate(req.actions), with_stars=False)
+    return records.simulate(req.level_id, _action_dicts(req.actions), with_stars=False)
 
 
 @router.post("/run")
 def run(req: SimRequest):
-    lv = LEVEL_BY_ID.get(req.level_id)
-    if lv is None:
+    """执行任务：服务端模拟 + 评分，并颁发一次性 submit_token 供 /api/submit。"""
+    if LEVEL_BY_ID.get(req.level_id) is None:
         raise HTTPException(404, "关卡不存在")
-    return _sim_response(lv, _validate(req.actions), with_stars=True)
+    sim = records.simulate(req.level_id, _action_dicts(req.actions), with_stars=True)
+    sim["submit_token"] = records.issue_token()
+    return sim
+
+
+@router.post("/submit")
+def submit(req: SubmitRequest):
+    """幂等提交成绩：服务端复算复评，重复 submit_token / 相同动作只落一条记录。"""
+    return records.submit_run(req.level_id, _action_dicts(req.actions), req.submit_token)
 
 
 @router.post("/score")
 def save_score(req: ScoreRequest):
-    db = next(get_db())
-    row = db.query(LevelScore).filter(LevelScore.level_id == req.level_id).first()
-    if row is None:
-        row = LevelScore(level_id=req.level_id, stars=req.stars,
-                         fuel_used=req.fuel_used, elapsed_days=req.elapsed_days)
-        db.add(row)
-    elif req.stars > row.stars:
-        row.stars = req.stars
-        row.fuel_used = req.fuel_used
-        row.elapsed_days = req.elapsed_days
-    db.commit()
-    return {"saved": True, "stars": max(row.stars, req.stars)}
+    """旧版接口兼容：接受客户端自报分数（不可回放，仅作 legacy 记录）。"""
+    return records.save_legacy_score(req.level_id, req.stars,
+                                     req.fuel_used, req.elapsed_days)
+
+
+@router.get("/levels/{level_id}/records")
+def level_records(level_id: int, limit: int = 20):
+    """关卡成绩榜：按 星级↓ 燃料↑ 耗时↑ 排序，默认前 20 条（不含轨迹）。"""
+    return records.list_records(level_id, limit=max(1, min(100, limit)))
+
+
+@router.get("/records/{record_id}")
+def record_detail(record_id: int, level_id: Optional[int] = None):
+    """成绩记录详情：完整动作 + 轨迹 + 事件 + 里程碑，供前端轨迹回放。"""
+    rec = records.get_record(record_id, level_id)
+    return records.serialize(rec, with_trajectory=True)

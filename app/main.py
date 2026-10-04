@@ -6,9 +6,10 @@ from fastapi.responses import FileResponse
 
 from app.api.router import router
 from app.core.config import PORT
-from app.core.database import Base, engine
+from app.core.migrations import init_db
 
-Base.metadata.create_all(bind=engine)
+# 建表 + 旧存档升级（补列、回填历史最佳成绩的可追溯占位记录）
+init_db()
 
 app = FastAPI(title="引力跳板：星际弹弓轨道规划游戏")
 app.include_router(router)

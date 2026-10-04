@@ -2,13 +2,19 @@
 window.LevelSelect = {
   name: "LevelSelect",
   props: ["system", "scores"],
+  emits: ["enter"],
   methods: {
-    starOf(id) { return (this.scores && this.scores[id] && this.scores[id].stars) || 0; },
+    scoreOf(id) { return (this.scores && this.scores[id]) || null; },
+    starOf(id) { const s = this.scoreOf(id); return s ? s.stars : 0; },
     unlocked(id) {
       if (id === 1) return true;
       return this.starOf(id - 1) >= 1;
     },
-    enter(lv) { this.$emit("enter", lv.id); },
+    enter(lv) { this.$emit("enter", lv.id, null); },
+    replay(lv) {
+      const s = this.scoreOf(lv.id);
+      if (s && s.best_record_id) this.$emit("enter", lv.id, s.best_record_id);
+    },
   },
   computed: {
     levels() {
@@ -55,8 +61,16 @@ window.LevelSelect = {
             <template v-for="i in 3" :key="i">
               <span :class="i <= starOf(lv.id) ? 'lit' : 'dim'">★</span>
             </template>
+            <span v-if="scoreOf(lv.id)" class="best-meta">
+              {{ (scoreOf(lv.id).fuel_used * 1731.5).toFixed(1) }} km/s
+              · {{ Math.round(scoreOf(lv.id).elapsed_days) }} 天
+            </span>
           </span>
           <span v-if="!unlocked(lv.id)" class="lock-tag">🔒 先通关上一关</span>
+          <span v-else-if="scoreOf(lv.id)" class="foot-btns">
+            <button class="btn chip" @click.stop="replay(lv)">▶ 回放最佳</button>
+            <span class="go-btn" @click.stop="enter(lv)">重新规划 →</span>
+          </span>
           <span v-else class="go-btn">开始规划 →</span>
         </div>
       </div>
