@@ -50,6 +50,10 @@ window.LevelSelect = {
         <div class="level-num">第 {{ lv.id }} 关</div>
         <h2>{{ lv.name }}</h2>
         <p class="brief">{{ lv.brief }}</p>
+        <div class="best-meta" v-if="starOf(lv.id) > 0">
+          最佳 {{ (scores[lv.id].fuel_used * 1731.5).toFixed(1) }} km/s · {{ Math.round(scores[lv.id].elapsed_days) }} 天
+          <span v-if="scores[lv.id].record_id" class="replayable-tag">可回放</span>
+        </div>
         <div class="level-foot">
           <span class="stars">
             <template v-for="i in 3" :key="i">

@@ -32,9 +32,9 @@ const app = createApp({
     },
     back() { this.view = "levels"; },
     onScore(s) {
-      if (s.stars > (this.scores[s.level_id] || { stars: 0 }).stars) {
-        this.scores = { ...this.scores, [s.level_id]: s };
-      }
+      // 合并权威最佳成绩（含可回放记录 id），联动星级与关卡解锁
+      const cur = this.scores[s.level_id] || {};
+      this.scores = { ...this.scores, [s.level_id]: { ...cur, ...s } };
     },
   },
   template: `

@@ -21,10 +21,13 @@ const API = {
       body: JSON.stringify({ level_id, actions }),
     });
   },
-  saveScore(level_id, stars, fuel_used, elapsed_days) {
+  // 提交成绩：run_id 关联服务端执行档案（可溯源），submission_id 为幂等键
+  saveScore(level_id, run_id, submission_id) {
     return this._req("/api/score", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level_id, stars, fuel_used, elapsed_days }),
+      body: JSON.stringify({ level_id, run_id, submission_id }),
     });
   },
+  records(level_id) { return this._req(`/api/scores/${level_id}/records`); },
+  record(record_id) { return this._req(`/api/records/${record_id}`); },
 };

@@ -185,3 +185,21 @@ body {
 .modal-stats b { display: block; font-size: 18px; color: var(--text); margin-bottom: 2px; }
 .modal-ms { font-size: 12px; color: var(--muted); margin-bottom: 18px; line-height: 1.7; }
 .modal-btns { display: flex; gap: 10px; justify-content: center; }
+
+/* ---------- 成绩记录与回放 ---------- */
+.best-meta { color: var(--muted); font-size: 12px; }
+.replayable-tag {
+  margin-left: 6px; color: var(--cyan); font-size: 11px;
+  border: 1px solid rgba(90, 220, 255, 0.4); border-radius: 999px; padding: 1px 8px;
+}
+.replay-bar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 5;
+  background: rgba(10, 16, 32, 0.88); border: 1px solid rgba(255, 209, 102, 0.45);
+  border-radius: 999px; padding: 6px 14px; font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); white-space: nowrap;
+}
+.replay-tag { color: var(--gold); font-weight: 600; }
+.replay-meta { color: var(--muted); }
+.replay-meta .lit { color: var(--gold); }
+.replay-meta .dim { color: rgba(255, 209, 102, 0.22); }
